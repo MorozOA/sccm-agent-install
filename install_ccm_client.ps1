@@ -1,10 +1,10 @@
 ## ================================================
 ## ==                                            ==
-## ==               script version 1.00          ==
+## ==               script version 1.03          ==
 ## ==                                            ==
 ## ==                                 Moroz Oleg ==
 ## ==                                 10/02/2012 ==
-## ==                             mod 03/10/2012 ==
+## ==                             mod 21/01/2013 ==
 ## ================================================
 
 $cDir = Get-Location
@@ -19,6 +19,7 @@ $psoutfile = $wrkdir + "psout.txt"
 $scoutfile = $wrkdir + "scout.txt"
 $errfile = $wrkdir + "faildlist.csv"
 $faildcnt = 0
+$inputver = 0
 # comment next string for MP autodetection
 #$mppredef="sccm-mp.contoso.com"
 
@@ -34,8 +35,7 @@ foreach ($mp in $mpcsv) {
 function ConvertTo-Object($hashtable) 
 {
    $object = New-Object PSObject
-   $hashtable.GetEnumerator() | 
-      ForEach-Object { Add-Member -inputObject $object -memberType NoteProperty -name $_.Name -value $_.Value }
+   $hashtable.GetEnumerator() | ForEach-Object { Add-Member -inputObject $object -memberType NoteProperty -name $_.Name -value $_.Value }
    $object
 }
 
@@ -49,12 +49,18 @@ function NameFrom-CN($hcn)
 }
 
 foreach ($l in $hsts) {
-    if ($l.DN -ne $null) { $hname = NameFrom-CN $l.DN }
-    if ($l.Name -ne $null) { $hname = $l.Name }
+    if ($inputver -eq 0) {
+        if ($l.DN -ne $null) { $inputver = 2 }
+        if ($l.Name -ne $null) { $inputver = 1 }
+    }
+    switch ($inputver) {
+        1 { $hname = $l.Name }
+        2 { $hname = NameFrom-CN $l.DN }
+    }
     $flProblemClient = 0
     $prNoWait = ""
     Write-Output "Installing SCCM Agent for $hname"
-	Write-Output "Check network path..."
+    Write-Output "Check network path..."
 	$hostadmdir = "\\" + $hname + "\admin$\"
 	if (Test-Path $hostadmdir) {
 		$hostdir64 = "\\" + $hname + "\admin$\SysWOW64\"
@@ -68,7 +74,7 @@ foreach ($l in $hsts) {
 			Write-Output "Check if ccmsetup service exists"
 			& sc.exe \\$hname query ccmsetup 2>&1 | Out-File $scoutfile
 			$scoutput = $(Get-Content -Path $scoutfile)
-			if (($scoutput -match "FAILED") -or ($scoutput -match "Ó¯Ë·Í‡")) {
+			if (($scoutput -match "FAILED") -or ($scoutput -match "–æ—à–∏–±–∫–∞")) {
 				Write-Output "No service running. Safe to clean directory..."
 			} else {
 				Write-Output "Service ccmsetup found!!! Installation must be canceled..."
@@ -115,7 +121,10 @@ foreach ($l in $hsts) {
 		}
 		if ($remotecmd -eq "") {
 			$faildcnt++
-			$err = @{Name=$hname; Error="no valid local path"}
+            switch ($inputver) {
+			 1 { $err = @{Name=$hname; Error="no valid local path"} }
+             2 { $err = @{Name=$hname; DN=$l.DN; Error="no valid local path"} }
+            }
 			$errtbl += ConvertTo-Object $err
 			Write-Output "No valid path found!"
 			Write-Output "All done for $hname"
@@ -124,16 +133,16 @@ foreach ($l in $hsts) {
         Write-Output "Determine management point..."
         $hostmp = ""
         if ($l.RD -ne $null) { $hostmp = $MPS.Get_Item($l.RD) }
-        if ($hostmp -ne "") {
-            Write-Output "MP: $hostmp"
-            $remcmdparams = "/retry:1 /mp:" + $hostmp
-        } else {
-            Write-Output "MP not found! Try to autodetect MP during setup..."
-            $remcmdparams = "/retry:1"
-        }
         if ($mppredef -ne $null) {
             Write-Output "MP predefined! Override detected MP with $mppredef"
             $hostmp=$mppredef
+        }
+        if ($hostmp -ne "") {
+            Write-Output "MP: $hostmp"
+            $remcmdparams = "/retry:1 /BITSPriority:FOREGROUND SMSSITECODE=PS1 /mp:" + $hostmp
+        } else {
+            Write-Output "MP not found! Try to autodetect MP during setup..."
+            $remcmdparams = "/retry:1 /BITSPriority:FOREGROUND SMSSITECODE=PS1"
         }
         if ($flProblemClient -gt 0) {
             Write-Host -ForegroundColor "Yellow" "Potential problem client. Run setup with no wait parameter"
@@ -150,25 +159,37 @@ foreach ($l in $hsts) {
                 if ($flProblemClient -gt 0) {
                    Write-Output "Status unknown!"
             	   $faildcnt++
-				   $err = @{Name=$hname; Error="status unknown"}
+                   switch ($inputver) {
+				    1 { $err = @{Name=$hname; Error="status unknown"} }
+                    2 { $err = @{Name=$hname; DN=$l.DN; Error="status unknown"} }
+                   }
 				   $errtbl += ConvertTo-Object $err
                 } else {
             	   Write-Output "Program faild!"
             	   $faildcnt++
-				   $err = @{Name=$hname; Error="install faild"}
+                   switch ($inputver) {
+				    1 { $err = @{Name=$hname; Error="install faild"} }
+                    2 { $err = @{Name=$hname; DN=$l.DN; Error="install faild"} }
+                   }
 				   $errtbl += ConvertTo-Object $err
                 }
         	}
     	} else {
         	Write-Output "Remote command start faild!"
         	$faildcnt++
-			$err = @{Name=$hname; Error="remote command start faild"}
+            switch ($inputver) {
+			 1 { $err = @{Name=$hname; Error="remote command start faild"} }
+             2 { $err = @{Name=$hname; DN=$l.DNError="remote command start faild"} }
+            }
 			$errtbl += ConvertTo-Object $err
     	}
 	} else {
 		Write-Output "No connection to host!"
 		$faildcnt++
-		$err = @{Name=$hname; Error="no connection to host"}
+        switch ($inputver) {
+		  1 { $err = @{Name=$hname; Error="no connection to host"} }
+          2 { $err = @{Name=$hname; DN=$l.DN; Error="no connection to host"} }
+        }
 		$errtbl += ConvertTo-Object $err
 	}
     if (Test-Path $psoutfile) { Remove-Item $psoutfile }
@@ -178,7 +199,10 @@ foreach ($l in $hsts) {
 }
 
 if (!($faildcnt -eq 0)) {
-	$errtbl | Export-Csv $errfile -NoTypeInformation
+    switch ($inputver) {
+	1 { $errtbl | Select-object Name,Error | Export-Csv $errfile -NoTypeInformation }
+    2 { $errtbl | Select-object Name,DN,Error | Export-Csv $errfile -NoTypeInformation }
+    }
     Write-Output "$faildcnt error(s)! See $errfile for details!"
 }
 
